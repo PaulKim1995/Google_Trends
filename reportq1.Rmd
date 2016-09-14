@@ -1,0 +1,157 @@
+---
+title: "Midterm 2"
+author: "Paul Kim"
+date: "April 17, 2016"
+output: pdf_document
+---
+
+The following is a report describing my analysis for Q1 of Midterm 2, Spring 2016.
+```{r, echo = FALSE}
+q1.raw = as.ts(read.csv(file = "q1train.csv")[2])
+```
+After downloading the data, I began performing exploratory analysis. 
+I started with a simple plot.
+
+```{r, echo = FALSE}
+plot(q1.raw, type = 'l', main = "Q1 TS")
+```
+
+I observed that there could be some quadratic trend to the data. 
+I also noticed that there was a highly consistent pattern starting at around t = 300, and that from that point the data appeared to follow a linear trend. 
+I decided to plot the data from t=300 onward to see how consistent the pattern was. 
+
+
+```{r, echo = FALSE}
+plot(q1.raw[300:536], type = 'l', main = "Q1[300:536]")
+```
+
+I decided to use these values as the basis for my analysis. 
+```{r, echo = FALSE}
+q1 = q1.raw[300:536]
+```
+
+The next step was to model the linear trend, upon which I could then perform differencing to the residuals to obtain stationary data. The most logical trend to apply was a linear one. 
+
+
+```{r, echo = FALSE}
+t = 1:237
+q1.lin = lm(q1~1+t)
+q1.lin.resid = residuals(q1.lin)
+```
+
+
+The residuals appeared as follows:
+
+
+```{r, echo = FALSE}
+plot(q1.lin.resid, type = 'l', main = "Linear fit residuals", xlab = "t", ylab = "Value")
+```
+
+The linear trend model appeared to account for the trend. I could now try seasonal differencing the residuals to eliminate the seasonal trend. 
+The seasonally differenced data appeared as follows
+
+```{r, echo = FALSE}
+q1.lin.resid.sd = diff(q1.lin.resid, lag = 52)
+```
+
+
+```{r, echo = FALSE}
+plot(q1.lin.resid.sd, type = 'l', ylab = 'Value', 
+     main = 'Seasonal Differenced residuals, Period = 52')
+
+acf(q1.lin.resid.sd, lag.max = 60)
+
+pacf(q1.lin.resid.sd, lag.max = 60)
+
+```
+
+The seasonally differenced data appeared to be stationary enough to fit an ARIMA model.
+
+The pacf of the linear residuals after seasonal differencing suggested an AR(3) model was appropriate. There were three significant autocorrelations at lags 1, 2, and 3, and then 3 other significant autocorrelations for the next 60 lags, or 5% of the observations, which is consistent with the expected type 1 error of the 95% signficance bands. 
+
+The acf also suggested that an AR model was appropriate, rather than an MA model.
+
+With this in mind, I applied sarima models to the data, with first order seasonal differencing at period 52, and incrementing the AR order.
+
+Model 1: (1, 0, 0) X (0, 1, 0)
+
+Model 2: (2, 0, 0) X (0, 1, 0)
+
+Model 3: (3, 0, 0) X (0, 1, 0)
+
+Model 4: (4, 0, 0) X (0, 1, 0)
+
+I added model 4 in order to try overfitting. If the value of the fourth AR coefficient is within 2 standard errors from zero, I know it is not significant and therefore can be more confident in my AR(3) model. 
+
+```{r, echo = FALSE}
+q1.arima1 = arima(q1.lin.resid, order = c(1, 0, 0), 
+                  seasonal = list(order = c(0, 1, 0), period = 52))
+q1.arima2 = arima(q1.lin.resid, order = c(2, 0, 0), 
+                  seasonal = list(order = c(0, 1, 0), period = 52))
+q1.arima3 = arima(q1.lin.resid, order = c(3, 0, 0), 
+                  seasonal = list(order = c(0, 1, 0), period = 52))
+q1.arima4 = arima(q1.lin.resid, order = c(4, 0, 0),
+                  seasonal = list(order = c(0, 1, 0), period = 52))
+```
+
+I then analyzed these models to see which was most appropriate. The AIC's and BIC's (respectively) were as follows:
+```{r, echo = FALSE}
+aic = c("Model 1" = q1.arima1$aic, "Model 2" = q1.arima2$aic, "Model 3" = q1.arima3$aic, "Model 4" = q1.arima4$aic)
+
+bic = c("Model 1" = BIC(q1.arima1), "Model 2" = BIC(q1.arima2), "Model 3" = BIC(q1.arima3), "Model 4" = BIC(q1.arima4))
+```
+```{r, echo = FALSE}
+aic
+bic
+```
+
+Both the aic and the bic indicated that model 3, the AR(3) model, was most appropriate. 
+
+Examining the actual coefficients for model 4, 
+
+```{r, echo = FALSE}
+q1.arima4
+```
+The magnitude of the AR4 coefficient for model 4 was smaller than the coefficient's SE, providing evidence that this model was overfitting and an AR(3) was appropriate.
+
+Finally, I used the tsdiag function to check standardized residuals and the Ljung-Box test p-values.
+
+
+```{r, echo = FALSE}
+tsdiag(q1.arima3)
+```
+The Ljung-Box test p-values were all above 0.95, and the standardized residuals appeared to be mean 0 and variance 1. 
+
+
+I checked the mean and variance of the standardized residuals, obtaining the standardized residuals using the rstandard.Arima function from the TSA package.
+```{r, message = F, echo = FALSE}
+library(TSA)
+std.resids = rstandard.Arima(q1.arima3)
+x = c("Mean" = mean(std.resids), "Variance" = var(std.resids))
+x
+```
+The mean and variance were indeed close enough to 0 and 1. 
+
+Given the above evidence, I decided to use model 3 to model the residuals from the linear trend. 
+
+I obtained the ARIMA predictions given by model 3, and then added these to the predicted values for the linear trend, to obtain my final predictions. 
+
+
+```{r, echo = FALSE}
+q1.arima.predict = predict(q1.arima3, n.ahead = 104)$pred
+plot(q1.arima.predict, ylab = "Value", main = "Arima predictions")
+
+q1.predict = predict(q1.lin, newdata = data.frame(t = 238:341)) + q1.arima.predict
+plot(q1.predict, type = "l", ylab = "Value", main = "Overall predictions")
+```
+
+Finally, I plotted the predictions with the known data. 
+
+```{r, echo = FALSE}
+Index = 1:640
+plot(c(q1.raw, q1.predict), xlab = "Time", ylab = "Value", main = "Q1 TS with Predicted Values", type = 'l')
+plot(c(q1.raw, q1.predict), x = Index, type = "o", col = ifelse(Index > 536, "red", "black"), xlab = "Time",
+     ylab = "Value", main = "Q1 TS with Predicted Values")
+```
+
+The predictions fit the data very well. 
